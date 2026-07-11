@@ -1,6 +1,7 @@
 import streamlit as st
 from datetime import datetime, timedelta
 from supabase_client import supabase
+from telegram_bot import send_telegram
 
 st.title("Thế Anh Fitness")
 
@@ -97,6 +98,18 @@ if st.button("Đặt lịch"):
                 "booking_date": str(date),
                 "booking_time": time
             }).execute()
+
+            send_telegram(
+                f"""
+🔥 BOOKING MỚI
+
+👤 Học viên: {name}
+
+📅 Ngày: {date}
+
+🕒 Giờ: {time}
+"""
+            )
 
             st.success(
                 f"Đặt lịch thành công: {date} lúc {time}"
