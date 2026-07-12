@@ -1,24 +1,84 @@
 import streamlit as st
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from supabase_client import supabase
 from telegram_bot import send_telegram
+
+# =========================
+# KIỂM TRA ĐĂNG NHẬP
+# =========================
+
+if not st.session_state.get("logged_in"):
+
+    st.error(
+        "Vui lòng đăng nhập tại trang Login"
+    )
+
+    st.stop()
+
+user_email = st.session_state.get(
+    "user_email"
+)
 
 st.title("Thế Anh Fitness")
 
 st.write("Website Booking Coaching")
 
-# Nhập tên học viên
-name = st.text_input("Tên học viên")
+client = (
+    supabase
+    .table("clients")
+    .select("*")
+    .eq("email", user_email)
+    .execute()
+)
+
+if len(client.data) == 0:
+
+    st.error(
+        "Tài khoản chưa được kích hoạt"
+    )
+
+    st.stop()
+
+student_name = client.data[0]["name"]
+
+expiry = client.data[0]["package_expiry"]
+
+if expiry:
+
+    expiry_date = date.fromisoformat(
+        expiry
+    )
+
+    if date.today() > expiry_date:
+
+        st.error(
+            "Gói coaching đã hết hạn"
+        )
+
+        st.stop()
+        
+st.success(
+    f"Xin chào {student_name}"
+)
+st.info(
+    f"Gói coaching hết hạn: {expiry}"
+)
+
+if st.button("Đăng xuất"):
+
+    st.session_state.clear()
+
+    st.rerun()
 
 # Chọn ngày
-date = st.date_input("Ngày")
+selected_date = st.date_input("Ngày")
 
 # Lấy booking của ngày đã chọn
 bookings = (
     supabase
     .table("bookings")
     .select("booking_time")
-    .eq("booking_date", str(date))
+    .eq("booking_date", str(selected_date))
     .execute()
 )
 
@@ -26,32 +86,23 @@ bookings = (
 booked_times = []
 
 for item in bookings.data:
-    booked_times.append(item["booking_time"])
 
-# Danh sách giờ bị khóa
-blocked_times = []
-
-for booked_time in booked_times:
-
-    # Khóa chính giờ đã đặt
-    blocked_times.append(booked_time)
-
-    # Khóa thêm 30 phút tiếp theo
-    time_str = booked_time.replace(" - VN", "")
-
-    dt = datetime.strptime(time_str, "%H:%M")
-
-    next_slot = dt + timedelta(minutes=30)
-
-    blocked_times.append(
-        next_slot.strftime("%H:%M") + " - VN"
+    booked_times.append(
+        item["booking_time"]
     )
 
 # Tạo toàn bộ khung giờ
 all_times = []
 
-current = datetime.strptime("01:00", "%H:%M")
-end = datetime.strptime("22:00", "%H:%M")
+current = datetime.strptime(
+    "01:00",
+    "%H:%M"
+)
+
+end = datetime.strptime(
+    "22:00",
+    "%H:%M"
+)
 
 while current <= end:
 
@@ -59,14 +110,55 @@ while current <= end:
         current.strftime("%H:%M") + " - VN"
     )
 
-    current += timedelta(minutes=30)
+    current += timedelta(
+        minutes=30
+    )
 
-# Chỉ lấy giờ còn trống
+# Chỉ lấy giờ không bị trùng
+# với buổi PT 60 phút
+
 available_times = []
 
 for t in all_times:
 
-    if t not in blocked_times:
+    slot_start = datetime.strptime(
+        t.replace(" - VN", ""),
+        "%H:%M"
+    )
+
+    slot_end = (
+        slot_start
+        + timedelta(minutes=60)
+    )
+
+    conflict = False
+
+    for booked_time in booked_times:
+
+        booked_start = datetime.strptime(
+            booked_time.replace(
+                " - VN",
+                ""
+            ),
+            "%H:%M"
+        )
+
+        booked_end = (
+            booked_start
+            + timedelta(minutes=60)
+        )
+
+        if (
+            slot_start < booked_end
+            and
+            slot_end > booked_start
+        ):
+
+            conflict = True
+            break
+
+    if not conflict:
+
         available_times.append(t)
 
 # Nếu hết giờ
@@ -85,40 +177,34 @@ time = st.selectbox(
 # Đặt lịch
 if st.button("Đặt lịch"):
 
-    if not name:
+    try:
 
-        st.error("Vui lòng nhập tên học viên")
+        supabase.table("bookings").insert({
+            "student_name": student_name,
+            "booking_date": str(selected_date),
+            "booking_time": time
+        }).execute()
 
-    else:
-
-        try:
-
-            supabase.table("bookings").insert({
-                "student_name": name,
-                "booking_date": str(date),
-                "booking_time": time
-            }).execute()
-
-            send_telegram(
-                f"""
+        send_telegram(
+            f"""
 🔥 BOOKING MỚI
 
-👤 Học viên: {name}
+👤 Học viên: {student_name}
 
 📅 Ngày: {date}
 
 🕒 Giờ: {time}
 """
-            )
+        )
 
-            st.success(
-                f"Đặt lịch thành công: {date} lúc {time}"
-            )
+        st.success(
+            f"Đặt lịch thành công: {date} lúc {time}"
+        )
 
-            st.rerun()
+        st.rerun()
 
-        except Exception as e:
+    except Exception as e:
 
-            st.error(
-                f"Có lỗi xảy ra: {str(e)}"
-            )
+        st.error(
+            f"Có lỗi xảy ra: {str(e)}"
+        )
